@@ -294,6 +294,25 @@ const MOVES = {
 })();
 const MOVE_IDS = ["m1", "m2", "m3", "m4"];
 
+/* ---------- the three phrases to finish. 1 = the two-chord sketch; 2 = the riff (both hands an octave apart, one bar played twice);
+   3 = the riff turned upside down, same rhythm. Rhythms from the MIDI: hits on 1, 1e, 1a, 2a, 3&, 4, 4& ---------- */
+const RIFF_HITS = [[0, 1], [1, 2], [3, 1], [7, 1], [10, 2], [12, 2], [14, 2]];
+function riff(tops) { const R = [], L = [];
+  [0, 16].forEach(o => RIFF_HITS.forEach(([s, l], i) => { const t = tops[i], lo = t.replace(/\d$/, d => d - 1);
+    R.push(ev("R", o + s, l, t)); L.push(ev("L", o + s, l, lo)); }));
+  return { R, L, C: [] }; }
+const PHRASES = {
+  p1: { id: "p1", n: 1, name: "The two-chord phrase", short: "Two chords", bpm: 74, src: SKETCH },
+  p2: { id: "p2", n: 2, name: "The riff", short: "The riff", bpm: 94, src: riff(["F4", "G4", "G3", "B3", "C4", "C#4", "D4"]) },
+  p3: { id: "p3", n: 3, name: "The riff, upside down", short: "Riff upside down", bpm: 100, src: riff(["G4", "F4", "F4", "D4", "Db4", "C4", "Bb3"]) }
+};
+const PHRASE_IDS = ["p1", "p2", "p3"];
+/* a phrase in key k, with or without its two empty bars */
+function phrase(pid, k, withGap) {
+  const S = PHRASES[pid].src, T = e => Object.assign({}, e, { notes: e.n.map(n => tr(n, k)) });
+  return { id: pid, key: k, bars: withGap ? 4 : 2, R: S.R.map(T), L: S.L.map(T), C: S.C.map(c => Object.assign({ s: c.s }, chordIn(c, k))), gap: withGap ? [2, 3] : null };
+}
+
 /* ---------- build what sounds and what is drawn, in a key ---------- */
 const barsOf = id => id === "sketch" ? 2 : id === "gap" ? 4 : id === "m3" ? 7 : 4;
 function piece(id, k) {
@@ -313,7 +332,7 @@ const COUNT16 = ["1", "e", "&", "a", "2", "e", "&", "a", "3", "e", "&", "a", "4"
 function notate(hits, lens) {
   const out = [], fit = (pos, d, rest) => { for (const v of [16, 12, 8, 6, 4, 3, 2, 1]) { if (v > d) continue;
       if ((v === 16 || v === 12) && pos !== 0) continue; if (v === 8 && pos % 8) continue; if (v === 6 && (pos % 8 || rest)) continue;
-      if (v === 4 && pos % 4) continue; if (v < 4 && (pos % 4) + v > 4) continue; if (v === 3 && pos % 4 > 1) continue; if (v === 2 && pos % 2) continue; return v; } return 1; };
+      if (v === 4 && pos % 4) continue; if (v < 4 && (pos % 4) + v > 4) continue; if (v === 3 && pos % 4 > 1) continue; if (v === 2 && pos % 2 && pos % 4 !== 1) continue; return v; } return 1; };
   const push = (pos, d, rest, i) => { let first = true; while (d > 0) { const v = fit(pos, d, rest); out.push({ pos, len: v, rest, hit: rest ? -1 : i, tieFrom: !rest && !first }); pos += v; d -= v; first = false; } };
   if (!hits.length) { push(0, 16, true, -1); return out; }
   let cur = 0; hits.forEach((h, i) => { if (h > cur) push(cur, h - cur, true, -1); const d = Math.min(lens[i], (i + 1 < hits.length ? hits[i + 1] : 16) - h); push(h, d, false, i); cur = h + d; });
@@ -341,6 +360,13 @@ function notate(hits, lens) {
       e.notes.forEach(n => { if (Math.abs(n.acc) > 1) fail("double accidental " + n.name + " in " + k); if (n.midi < 30 || n.midi > 92) fail("out of range " + n.name + n.oct + " in " + k); }); });
     P.C.forEach(c => { if (EVERYDAY[c.sym.slice(0, 2)] && !c.alt) fail("no everyday name for " + c.sym + " in " + k); }); }));
   if (piece("sketch", "Db").C[1].alt !== "E") fail("F♭ needs its everyday name E");
+  /* phrases 2 and 3: the notes as played, both hands an octave apart, and safe in every key */
+  const names = (pid, k) => phrase(pid, k).R.slice(0, 7).map(e => e.notes[0].name).join(" ");
+  if (names("p2", "G") !== "F G G B C C♯ D") fail("riff in G " + names("p2", "G"));
+  if (names("p3", "G") !== "G F F D D♭ C B♭") fail("upside-down riff in G " + names("p3", "G"));
+  if (phrase("p2", "G").L[2].notes[0].midi !== 43 || phrase("p2", "G").R[2].notes[0].midi !== 55) fail("riff low G register");
+  KEYS.forEach(k => PHRASE_IDS.forEach(pid => { const P = phrase(pid, k, true);
+    P.R.concat(P.L).forEach(e => e.notes.forEach(n => { if (Math.abs(n.acc) > 1) fail("double accidental in " + pid + " " + k); if (n.midi < 30 || n.midi > 92) fail("range " + pid + " " + k); })); }));
   if (notate([0, 5, 8, 12], [5, 3, 4, 4]).map(n => (n.rest ? "r" : n.tieFrom ? "~" : "") + n.len).join(" ") !== "4 ~1 3 4 4") fail("sketch bar 1 rhythm");
 })();
 
@@ -399,7 +425,7 @@ function drawScore(host, P, o = {}) {
     if (b === b1 - 1) { const e = new vf.StaveConnector(tr_, bs); e.setType("singleRight"); e.setStyle(staffStyle); e.setContext(ctx).draw(); }
     const isGap = P.gap && b >= P.gap[0] && b <= P.gap[1];
     if (isGap) { el("rect", { x: tr_.getNoteStartX() - 6, y: TOP + 8, width: tr_.getNoteEndX() - tr_.getNoteStartX() + 12, height: GAPY + 84, rx: 10, fill: C.gap, "fill-opacity": .1, stroke: C.gap, "stroke-opacity": .55, "stroke-dasharray": "6 6" }, svg);
-      if (b === P.gap[0]) el("text", { x: tr_.getNoteStartX() + 4, y: TOP + 118, "font-family": MONO, "font-weight": 700, "font-size": 15, fill: C.gap, "letter-spacing": 2 }, svg, "YOUR TWO BARS"); }
+      if (b === P.gap[0]) el("text", { x: tr_.getNoteStartX() + 4, y: TOP + 118, "font-family": MONO, "font-weight": 700, "font-size": o.big ? 22 : 15, fill: C.gap, "letter-spacing": 2 }, svg, "YOUR TWO BARS"); }
     const mkVoice = (hand, clef) => {
       const evs = P[hand].filter(e => e.s >= b * 16 && e.s < (b + 1) * 16);
       const by = new Map(); evs.forEach(e => { const p = e.s - b * 16; if (!by.has(p)) by.set(p, { pos: p, len: e.l, notes: [] }); const g = by.get(p); g.len = Math.max(g.len, e.l); e.notes.forEach(nn => g.notes.push(nn)); });
@@ -415,7 +441,7 @@ function drawScore(host, P, o = {}) {
       const voice = new vf.Voice({ numBeats: 4, beatValue: 4 }).setStrict(false); voice.addTickables(notes);
       vf.Accidental.applyAccidentals([voice], sig);
       notes.forEach(sn => sn.getModifiers().forEach(m => { if (m.setStyle) m.setStyle({ fillStyle: C.ink, strokeStyle: C.ink }); }));
-      const beams = vf.Beam.generateBeams(notes.filter((_, i) => !N[i].rest), { groups: [new vf.Fraction(1, 4)] });
+      const beams = vf.Beam.generateBeams(notes, { groups: [new vf.Fraction(1, 4)], beamRests: false });
       return { voice, notes, N, beams, col };
     };
     const T = mkVoice("R", "treble"), B = mkVoice("L", "bass");
@@ -427,8 +453,10 @@ function drawScore(host, P, o = {}) {
     P.C.filter(c => c.s >= b * 16 && c.s < (b + 1) * 16).forEach(c => {
       const p = c.s - b * 16, find = V => { const i = V.N.findIndex(nn => nn.pos === p); return i >= 0 ? V.notes[i] : null; }, nt = find(T) || find(B);
       const cx = nt ? nt.getAbsoluteX() : tr_.getNoteStartX() + (tr_.getNoteEndX() - tr_.getNoteStartX()) * p / 16;
-      const t = el("text", { x: cx - 2, y: TOP + 2, "font-family": DISP, "font-weight": 700, "font-size": 21, fill: C.gold, class: "csym" }, svg, c.sym);
-      if (c.alt) el("tspan", { "font-size": 13, fill: C.dim, dx: 4 }, t, "(" + c.alt + ")");
+      const t = el("text", { x: cx - 2, y: TOP + 2, "font-family": DISP, "font-weight": 700, "font-size": o.big ? 30 : 21, fill: C.gold, class: "csym" }, svg, c.sym);
+      if (c.alt) el("tspan", { "font-size": o.big ? 20 : 13, fill: C.dim, dx: 4 }, t, "(" + c.alt + ")");
+      /* two chords close together: lift the second one so the names never collide */
+      try { const bb = t.getBBox(); if (svg.__lastEnd != null && bb.x < svg.__lastEnd + 6 && !svg.__lifted) { t.setAttribute("y", TOP - (o.big ? 28 : 20)); svg.__lifted = true; } else svg.__lifted = false; svg.__lastEnd = bb.x + bb.width; } catch (e) {}
     });
     xs.push({ b, x0: tr_.getNoteStartX(), x1: tr_.getNoteEndX() });
     x += w;
@@ -444,7 +472,7 @@ function scorePlayhead(svg, abs) { if (!svg || !svg.__xs) return; const ph = svg
 function drawCount(host, P, o = {}) {
   const b0 = o.from || 0, b1 = o.to || 2, cells = (b1 - b0) * 16, L = 70, CW = o.cw || 44, W = L + cells * CW + 12, H = 230;
   const s = svgRoot(host, W, H, "Counting grid, 1 e and a. Circles: right-hand hits. Arrows: left-hand hits.");
-  const lab = (y, t, c) => el("text", { x: 4, y, "font-family": MONO, "font-size": 11, fill: c || C.dim, "letter-spacing": 1.5 }, s, t);
+  const lab = (y, t, c) => el("text", { x: 4, y, "font-family": MONO, "font-size": o.big ? 14 : 11, fill: c || C.dim, "letter-spacing": 1.5 }, s, t);
   lab(62, "RIGHT", C.rh); lab(120, "COUNT"); lab(178, "LEFT", C.lh);
   const colX = i => L + CW * i + CW / 2;
   const ph = el("rect", { x: L, y: 20, width: CW, height: H - 30, rx: 8, fill: C.ink, opacity: 0, class: "ph" }, s);
@@ -458,10 +486,10 @@ function drawCount(host, P, o = {}) {
     if (gapOn(i) && j === 0) el("rect", { x: L + CW * i + 3, y: 24, width: CW * 16 - 6, height: H - 34, rx: 10, fill: C.gap, "fill-opacity": .08, stroke: C.gap, "stroke-opacity": .5, "stroke-dasharray": "6 6" }, s);
     if (hitR) { el("ellipse", { cx: x, cy: 118, rx: CW * .38, ry: 26, fill: C.rh, "fill-opacity": .16, stroke: C.rh, "stroke-width": 2.6, transform: `rotate(-14 ${x} 118)`, class: "ring", "data-i": i }, s);
       const top = onR.get(i).slice().sort((a, b) => b.midi - a.midi)[0];
-      el("text", { x, y: 66, "text-anchor": "middle", "font-family": DISP, "font-weight": 700, "font-size": 21, fill: C.rh }, s, top.name); }
-    el("text", { x, y: 127, "text-anchor": "middle", "font-family": beat ? DISP : MONO, "font-weight": beat ? 700 : 500, "font-size": beat ? 26 : 18, fill: hitR ? C.ink : beat ? C.dim : C.faint }, s, COUNT16[j]);
+      el("text", { x, y: 66, "text-anchor": "middle", "font-family": DISP, "font-weight": 700, "font-size": o.big ? 26 : 21, fill: C.rh }, s, top.name); }
+    el("text", { x, y: 127, "text-anchor": "middle", "font-family": beat ? DISP : MONO, "font-weight": beat ? 700 : 500, "font-size": beat ? (o.big ? 32 : 26) : (o.big ? 22 : 18), fill: hitR ? C.ink : beat ? (o.big ? C.ink : C.dim) : (o.big ? C.dim : C.faint) }, s, COUNT16[j]);
     if (onL.has(i)) { el("path", { d: `M${x},${H - 14} L${x},${H - 58} M${x - 7},${H - 48} L${x},${H - 60} L${x + 7},${H - 48}`, fill: "none", stroke: C.lh, "stroke-width": 2.6, "stroke-linecap": "round", "stroke-linejoin": "round" }, s);
-      el("text", { x: x + 8, y: H - 22, "font-family": FONT, "font-weight": 700, "font-size": 14, fill: C.lh }, s, onL.get(i).slice().sort((a, b) => a.midi - b.midi)[0].name); }
+      el("text", { x: x + 8, y: H - 22, "font-family": FONT, "font-weight": 700, "font-size": o.big ? 20 : 14, fill: C.lh }, s, onL.get(i).slice().sort((a, b) => a.midi - b.midi)[0].name); }
   }
   s.__ph = ph; s.__geo = { L, CW, b0, cells }; return s;
 }
